@@ -153,17 +153,17 @@ struct Scheduler
     ThreadSafePriorityQueue<TimestepHandle, std::vector<TimestepHandle>,
             CompareTimesteps>
             timesteps_to_write;
-    // One Booksim simulation per scheduler thread, plus one for the
-    // serial path. Instances share nothing, so they can run concurrently.
+    // One Booksim instance per scheduler thread plus one for the serial path.
     std::vector<BookSimInstance *> booksim_instances;
 
     TimingModel timing_model{timing_model_detailed};
-    size_t noc_width_in_tiles;
-    size_t noc_height_in_tiles;
-    size_t buffer_size;
-    size_t core_count;
-    size_t max_cores_per_tile;
-    double timestep_sync_delay;
+    std::string noc_topology{"mesh"};
+    size_t noc_width_in_tiles{0UL};
+    size_t noc_height_in_tiles{0UL};
+    size_t buffer_size{0UL};
+    size_t core_count{0UL};
+    size_t max_cores_per_tile{0UL};
+    double timestep_sync_delay{0.0};
 };
 
 // NocInfo is used by the scheduler to track the high-level state of the NoC
@@ -221,23 +221,10 @@ double schedule_push_next_message(std::vector<MessageFifo> &messages_sent_per_co
 void noc_update_message_tracking(const Message &m, NocInfo &noc, bool entering_noc);
 void noc_update_all_tracked_messages(double t, NocInfo &noc);
 
-// TODO: in the future, allow these strings to be setup dynamically. That way
-//  the user can specify the NoC parameters within the architecture
-//  description file.
-constexpr std::array<std::string_view, 26> booksim_config_str = {{
-        "topology = cmesh",
+// Router settings that do not depend on the architecture being modelled.
+constexpr std::array<std::string_view, 15> booksim_router_config = {{
         "subnets = 2",
-        "k = 8",
-        "n = 2",
-        "x = 8",
-        "y = 4",
-        "c = 4",
-        "xr = 2",
-        "yr = 2",
-        "routing_function = dor_no_express",
         "use_noc_latency = 0",
-        "num_vcs = 1",
-        "vc_buf_size = 8",
         "vc_allocator = islip",
         "sw_allocator = islip",
         "alloc_iters = 1",
@@ -252,6 +239,11 @@ constexpr std::array<std::string_view, 26> booksim_config_str = {{
         "injection_rate = 0.0",
         "clock_period = 1e-9"
 }};
+
+// Builds a Booksim configuration for the NoC. Throws if Booksim cannot model it.
+std::vector<std::string> booksim_config_from_noc(const std::string &topology,
+        size_t width_in_tiles, size_t height_in_tiles,
+        size_t cores_per_tile, size_t link_buffer_size);
 
 }
 

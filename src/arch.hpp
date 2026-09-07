@@ -73,6 +73,7 @@ public:
     std::vector<TileConfiguration> tiles;
     LookupTable<double> ts_sync_delay_table{};
     std::string name;
+    std::string noc_topology{"mesh"};
     size_t core_count{0UL};
     size_t max_cores_per_tile{0UL};
     size_t noc_width_in_tiles{1UL};
@@ -96,6 +97,7 @@ Architecture load_arch(const std::filesystem::path &path);
 struct NetworkOnChipConfiguration
 {
     LookupTable<double> ts_sync_delay_table{};
+    std::string topology{"mesh"};
     size_t width_in_tiles{1UL};
     size_t height_in_tiles{1UL};
     size_t link_buffer_size{0UL};

@@ -432,6 +432,8 @@ sanafe::description_parse_noc_configuration_yaml(
         const ryml::Parser &parser, const ryml::ConstNodeRef noc_attributes)
 {
     NetworkOnChipConfiguration noc;
+    noc.topology = yaml_optional_field<std::string>(noc_attributes, "topology")
+                           .value_or("mesh");
     noc.width_in_tiles =
             yaml_required_field<int>(parser, noc_attributes, "width");
     noc.height_in_tiles =

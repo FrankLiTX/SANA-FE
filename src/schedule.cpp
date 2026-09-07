@@ -161,18 +161,81 @@ double sanafe::schedule_messages_timestep_cycle(
     return ts_data.sim_time;
 }
 
+std::vector<std::string> sanafe::booksim_config_from_noc(
+        const std::string &topology, const size_t width_in_tiles,
+        const size_t height_in_tiles, const size_t cores_per_tile,
+        const size_t link_buffer_size)
+{
+    if (topology != "mesh")
+    {
+        throw std::runtime_error("Error: NoC topology '" + topology +
+                "' is not supported by the cycle-accurate timing model; "
+                "only 'mesh' is.");
+    }
+    // Booksim's cmesh only supports four cores per router.
+    const bool concentrated = (cores_per_tile > 1);
+    if (concentrated && cores_per_tile != 4)
+    {
+        throw std::runtime_error("Error: The cycle-accurate timing model "
+                                 "supports 1 or 4 cores per tile, not " +
+                std::to_string(cores_per_tile) + ".");
+    }
+    std::vector<std::string> config(
+            std::begin(booksim_router_config), std::end(booksim_router_config));
+    const auto set = [&config](const std::string &key, const auto &value) {
+        config.push_back(key + " = " + std::to_string(value));
+    };
+
+    // Booksim numbers mesh nodes by row but cmesh nodes by column, like tile
+    // ids. A square mesh is symmetric, so only rectangular grids need cmesh.
+    const bool square = (width_in_tiles == height_in_tiles);
+    if (concentrated || !square)
+    {
+        config.emplace_back("topology = cmesh");
+        config.emplace_back("routing_function = dor_no_express");
+        set("x", width_in_tiles);
+        set("y", height_in_tiles);
+        set("c", 4);
+        // Booksim splits the concentration into a 2x2 grid of cores per router.
+        set("xr", 2);
+        set("yr", 2);
+        set("k", std::max(width_in_tiles, height_in_tiles));
+        set("n", 2);
+    }
+    else
+    {
+        config.emplace_back("topology = mesh");
+        config.emplace_back("routing_function = dim_order");
+        set("c", 1);
+        set("k", width_in_tiles);
+        set("n", 2);
+    }
+
+    // Dimension-order routing is deterministic, so one VC cannot deadlock.
+    set("num_vcs", 1);
+    set("vc_buf_size", std::max<size_t>(1, link_buffer_size));
+
+    return config;
+}
+
 void sanafe::schedule_create_threads(
         Scheduler &scheduler, const int scheduler_thread_count)
 {
-    // Index 0 serves the serial path, so there is always at least one.
-    const size_t instance_count =
-            static_cast<size_t>(std::max(1, scheduler_thread_count));
-    const std::vector<std::string> booksim_config(
-            std::begin(booksim_config_str), std::end(booksim_config_str));
-    for (size_t i = 0; i < instance_count; ++i)
+    // Only the cycle-accurate model uses Booksim.
+    if (scheduler.timing_model == timing_model_cycle_accurate)
     {
-        scheduler.booksim_instances.push_back(
-                booksim_create(booksim_config));
+        // Index 0 serves the serial path, so there is always at least one.
+        const size_t instance_count =
+                static_cast<size_t>(std::max(1, scheduler_thread_count));
+        const std::vector<std::string> booksim_config = booksim_config_from_noc(
+                scheduler.noc_topology, scheduler.noc_width_in_tiles,
+                scheduler.noc_height_in_tiles, scheduler.max_cores_per_tile,
+                scheduler.buffer_size);
+        for (size_t i = 0; i < instance_count; ++i)
+        {
+            scheduler.booksim_instances.push_back(
+                    booksim_create(booksim_config));
+        }
     }
 
     TRACE1(CHIP, "Creating %d scheduler threads\n", scheduler_thread_count);
