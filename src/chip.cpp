@@ -26,7 +26,6 @@
 #include <utility>
 #include <vector>
 
-#include <booksim_lib.hpp> // For cycle-accurate NoC simulation
 #ifdef HAVE_OPENMP
 #include <omp.h>
 #endif
@@ -92,14 +91,6 @@ sanafe::SpikingChip::SpikingChip(const Architecture &arch)
         }
     }
 
-    std::vector<std::string> booksim_config_vec(
-            std::begin(booksim_config_str), std::end(booksim_config_str));
-    const BookSimConfig new_config =
-            booksim_load_config(std::move(booksim_config_vec));
-    // Use a unique_ptr for the config so that we don't need to include Booksim
-    //  library in the header (meaning that plugins using chip.hpp don't need to
-    //  also include this library)
-    booksim_config = std::make_shared<BookSimConfig>(new_config);
     chip_count++;
 }
 
@@ -1099,7 +1090,7 @@ sanafe::TimestepHandle sanafe::SpikingChip::sim_hw_timestep(
     sim_timings.energy_calculation_end_tm = std::chrono::steady_clock::now();
 
     sim_timings.scheduler_start_tm = sim_timings.energy_calculation_end_tm;
-    schedule_messages(ts, scheduler, booksim_config);
+    schedule_messages(ts, scheduler);
     sim_timings.scheduler_end_tm = std::chrono::steady_clock::now();
 
     update_simulator_timings(sim_timings);

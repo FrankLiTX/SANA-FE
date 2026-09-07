@@ -122,7 +122,6 @@ private:
         TimePoint scheduler_end_tm{TimePoint::min()};
     };
 
-    std::shared_ptr<BookSimConfig> booksim_config;
     std::atomic<long int> total_messages_sent{0L};
     size_t total_neurons_mapped{0UL};
     long int total_neurons_updated{0L};

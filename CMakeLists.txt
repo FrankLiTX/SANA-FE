@@ -165,7 +165,7 @@ message(STATUS "got ryml")
 
 ############## booksim2
 # project(booksim2-quickstart LANGUAGES CXX)
-set(BOOKSIM_VERSION "a495f7ec69a4865a6b960513fc5920bfad29dfad")
+set(BOOKSIM_VERSION "345c809f332204457da7294e0c4c10ad0e43d825")
 set(BOOKSIM_INSTALL OFF)
 set(BOOKSIM_GENERATE_PARSER OFF)
 FetchContent_Declare(booksim

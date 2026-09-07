@@ -68,6 +68,6 @@ struct LookupTable;
 }
 
 // External library forward declarations i.e., not in SANA-FE's namespace
-class BookSimConfig;
+struct BookSimInstance;
 
 #endif

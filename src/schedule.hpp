@@ -20,8 +20,6 @@
 #include <utility>
 #include <vector>
 
-#include <booksim_config.hpp>
-
 #include "chip.hpp"
 #include "fwd.hpp"
 #include "timestep.hpp"
@@ -41,7 +39,7 @@ enum Direction : uint8_t
 
 using MessageFifo = std::list<Message>;
 using MessagePriorityQueue = std::priority_queue<Message, std::vector<Message>, CompareMessagesBySentTime>;
-using TimingModelFunc = std::function<double(TimestepHandle &, Scheduler &)>;
+using TimingModelFunc = std::function<double(TimestepHandle &, Scheduler &, int worker)>;
 constexpr size_t max_buffered_timesteps{256UL};
 
 template <typename T, typename Container = std::vector<T>,
@@ -155,7 +153,9 @@ struct Scheduler
     ThreadSafePriorityQueue<TimestepHandle, std::vector<TimestepHandle>,
             CompareTimesteps>
             timesteps_to_write;
-    std::shared_ptr<BookSimConfig> booksim_config;
+    // One Booksim simulation per scheduler thread, plus one for the
+    // serial path. Instances share nothing, so they can run concurrently.
+    std::vector<BookSimInstance *> booksim_instances;
 
     TimingModel timing_model{timing_model_detailed};
     size_t noc_width_in_tiles;
@@ -204,10 +204,10 @@ private:
 };
 
 MessagePriorityQueue schedule_init_timing_priority(std::vector<MessageFifo> &message_queues_per_core);
-void schedule_messages(TimestepHandle &ts, Scheduler &scheduler, std::shared_ptr<BookSimConfig> config);
-double schedule_messages_timestep_simple(TimestepHandle &ts, Scheduler &scheduler);
-double schedule_messages_timestep_detailed(TimestepHandle &ts, Scheduler &scheduler);
-double schedule_messages_timestep_cycle(TimestepHandle &ts, Scheduler &scheduler);
+void schedule_messages(TimestepHandle &ts, Scheduler &scheduler);
+double schedule_messages_timestep_simple(TimestepHandle &ts, Scheduler &scheduler, int worker);
+double schedule_messages_timestep_detailed(TimestepHandle &ts, Scheduler &scheduler, int worker);
+double schedule_messages_timestep_cycle(TimestepHandle &ts, Scheduler &scheduler, int worker);
 
 void schedule_create_threads(Scheduler &scheduler, int scheduler_thread_count);
 void schedule_messages_thread(Scheduler &scheduler, int thread_id);

@@ -15,7 +15,6 @@
 #if HAVE_OPENMP
 #include <omp.h>
 #endif
-#include <booksim_lib.hpp>
 
 #include "arch.hpp"
 #include "arg_parsing.hpp"
@@ -70,9 +69,6 @@ int main(int argc, const char *argv[])
                 required_args.timesteps_to_execute, optional_flags.timing_model,
                 optional_flags.scheduler_threads, trace_flags,
                 optional_flags.output_dir.string());
-
-        INFO("Closing Booksim2 library\n");
-        booksim_close();
 
         INFO("***** Run Summary *****\n");
         hw.sim_output_run_summary(optional_flags.output_dir, run_summary);

@@ -62,8 +62,8 @@ sanafe::NocInfo::NocInfo(const Scheduler &scheduler)
     core_finished_receiving = std::vector<double>(core_count);
 }
 
-double sanafe::schedule_messages_timestep_simple(
-        TimestepHandle &ts, Scheduler &scheduler)
+double sanafe::schedule_messages_timestep_simple(TimestepHandle &ts,
+        Scheduler &scheduler, [[maybe_unused]] const int worker)
 {
     // Simple analytical model, that takes the maximum of either neuron or
     //  message processing for each core, and takes the maximum latency of
@@ -106,7 +106,7 @@ double sanafe::schedule_messages_timestep_simple(
 }
 
 double sanafe::schedule_messages_timestep_cycle(
-        TimestepHandle &ts, Scheduler &scheduler)
+        TimestepHandle &ts, Scheduler &scheduler, const int worker)
 {
     // Cycle-accurate (NoC)-based timing model for highly accurate network
     //  simulation, using external simulator Booksim 2. This is the most
@@ -119,40 +119,31 @@ double sanafe::schedule_messages_timestep_cycle(
     // The version of Booksim 2 used here has had substantial modifications,
     //  including a new static library interface (instead of being standalone)
     Timestep &ts_data = ts.get();
+    BookSimInstance *const booksim = scheduler.booksim_instances.at(worker);
     for (auto &core_messages : ts_data.messages)
     {
         for (auto &message : core_messages)
         {
+            const std::pair<int, int> src_hw =
+                    std::make_pair(static_cast<int>(message.src_tile_id),
+                            static_cast<int>(message.src_core_offset));
+
             if (message.mid == placeholder_mid)
             {
-                std::pair<std::string, int> src_neuron =
-                        std::make_pair(message.src_neuron_group_id,
-                                static_cast<int>(message.src_neuron_offset));
-                std::pair<int, int> src_hw =
-                        std::make_pair(static_cast<int>(message.src_tile_id),
-                                static_cast<int>(message.src_core_offset));
-
-                booksim_create_processing_event(
-                        static_cast<int>(message.timestep),
-                        std::move(src_neuron), std::move(src_hw),
+                // A spike with no message only occupies its core.
+                booksim_create_processing_event(booksim,
+                        static_cast<int>(message.timestep), src_hw,
                         message.generation_delay);
             }
             else
             {
-                std::pair<std::string, int> src_neuron =
-                        std::make_pair(message.src_neuron_group_id,
-                                static_cast<int>(message.src_neuron_offset));
-                std::pair<int, int> src_hw =
-                        std::make_pair(static_cast<int>(message.src_tile_id),
-                                static_cast<int>(message.src_core_offset));
-                std::pair<int, int> dest_hw =
+                const std::pair<int, int> dest_hw =
                         std::make_pair(static_cast<int>(message.dest_tile_id),
                                 static_cast<int>(message.dest_core_offset));
 
-                booksim_create_spike_event(static_cast<int>(message.timestep),
-                        std::move(src_neuron), std::move(src_hw),
-                        std::move(dest_hw), message.generation_delay,
-                        message.processing_delay);
+                booksim_create_spike_event(booksim,
+                        static_cast<int>(message.timestep), src_hw, dest_hw,
+                        message.generation_delay, message.processing_delay);
             }
         }
     }
@@ -160,7 +151,7 @@ double sanafe::schedule_messages_timestep_cycle(
     // Messages have been sent to the library, so now just execute the
     //  simulation and return simulated time
     TRACE1(SCHEDULER, "Running Booksim2 simulation\n");
-    const double booksim_time = booksim_run(scheduler.booksim_config);
+    const double booksim_time = booksim_run(booksim);
 
     ts_data.sim_time = booksim_time;
     // Account for fixed costs per timestep e.g., house-keeping or global sync
@@ -173,6 +164,17 @@ double sanafe::schedule_messages_timestep_cycle(
 void sanafe::schedule_create_threads(
         Scheduler &scheduler, const int scheduler_thread_count)
 {
+    // Index 0 serves the serial path, so there is always at least one.
+    const size_t instance_count =
+            static_cast<size_t>(std::max(1, scheduler_thread_count));
+    const std::vector<std::string> booksim_config(
+            std::begin(booksim_config_str), std::end(booksim_config_str));
+    for (size_t i = 0; i < instance_count; ++i)
+    {
+        scheduler.booksim_instances.push_back(
+                booksim_create(booksim_config));
+    }
+
     TRACE1(CHIP, "Creating %d scheduler threads\n", scheduler_thread_count);
     for (int thread_id = 0; thread_id < scheduler_thread_count; thread_id++)
     {
@@ -183,15 +185,13 @@ void sanafe::schedule_create_threads(
 }
 
 // **** Detailed scheduler implementation ****
-void sanafe::schedule_messages(TimestepHandle &ts, Scheduler &scheduler,
-        std::shared_ptr<BookSimConfig> config)
+void sanafe::schedule_messages(TimestepHandle &ts, Scheduler &scheduler)
 {
-    scheduler.booksim_config = config;
     if (scheduler.scheduler_threads.empty())
     {
         const sanafe::TimingModelFunc timing_model =
                 get_model_function(scheduler.timing_model);
-        timing_model(ts, scheduler);
+        timing_model(ts, scheduler, 0);
     }
     else
     {
@@ -209,8 +209,8 @@ void sanafe::schedule_messages(TimestepHandle &ts, Scheduler &scheduler,
     }
 }
 
-double sanafe::schedule_messages_timestep_detailed(
-        TimestepHandle &ts, Scheduler &scheduler)
+double sanafe::schedule_messages_timestep_detailed(TimestepHandle &ts,
+        Scheduler &scheduler, [[maybe_unused]] const int worker)
 {
     // Schedule the global order of messages using a semi-analytical timing
     //  model. This sits in between the complexity of the simple and
@@ -623,8 +623,7 @@ std::pair<int, int> sanafe::NocInfo::get_route_xy_increments(
     return std::make_pair(x_increment, y_increment);
 }
 
-void sanafe::schedule_messages_thread(
-        Scheduler &scheduler, [[maybe_unused]] const int thread_id)
+void sanafe::schedule_messages_thread(Scheduler &scheduler, const int thread_id)
 {
     while (!scheduler.should_stop)
     {
@@ -636,7 +635,7 @@ void sanafe::schedule_messages_thread(
                     ts->timestep, scheduler.timesteps_to_schedule.size());
             const TimingModelFunc timing_model =
                     get_model_function(scheduler.timing_model);
-            timing_model(ts, scheduler);
+            timing_model(ts, scheduler, thread_id);
         }
     }
 
@@ -661,6 +660,12 @@ void sanafe::schedule_stop_all_threads(Scheduler &scheduler)
             thread.join();
         }
     }
+
+    for (BookSimInstance *instance : scheduler.booksim_instances)
+    {
+        booksim_destroy(instance);
+    }
+    scheduler.booksim_instances.clear();
 
     TRACE1(SCHEDULER, "All threads stopped successfully.\n");
 }
