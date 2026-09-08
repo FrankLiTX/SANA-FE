@@ -13,9 +13,12 @@
 #include <algorithm>
 #include <cassert>
 #include <cstddef>
+#include <exception>
 #include <functional> // For std::reference_wrapper
 #include <list>
 #include <memory>
+#include <mutex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -49,6 +52,22 @@ sanafe::TimingModelFunc get_model_function(sanafe::TimingModel model)
     default:
         throw std::invalid_argument("Unknown timing model");
     }
+}
+
+// Keeps the first error and terminates the queues so nothing keeps waiting.
+void schedule_record_error(
+        sanafe::Scheduler &scheduler, std::exception_ptr error)
+{
+    {
+        const std::lock_guard<std::mutex> lock(scheduler.error_mutex);
+        if (!scheduler.first_error)
+        {
+            scheduler.first_error = std::move(error);
+        }
+    }
+    scheduler.should_stop = true;
+    scheduler.timesteps_to_schedule.set_terminate();
+    scheduler.timesteps_to_write.set_terminate();
 }
 }
 
@@ -259,11 +278,20 @@ void sanafe::schedule_messages(TimestepHandle &ts, Scheduler &scheduler)
     else
     {
         // Make sure the timestep queue stays within sensible size bounds
-        while (scheduler.timesteps_to_schedule.size() > max_buffered_timesteps)
+        // A failed thread sets should_stop, so this cannot wait forever.
+        while ((scheduler.timesteps_to_schedule.size() >
+                       max_buffered_timesteps) &&
+                !scheduler.should_stop)
         {
             TRACE1(SCHEDULER, "Warning: Timestep queue full (%zu>%zu)\n",
                     scheduler.timesteps_to_schedule.size(),
                     max_buffered_timesteps);
+        }
+        if (scheduler.should_stop)
+        {
+            // Rethrows the failed thread's error now, not after the last
+            //  timestep.
+            schedule_stop_all_threads(scheduler);
         }
         TRACE1(SCHEDULER, "Pushing timestep:%ld to be scheduled\n",
                 ts->timestep);
@@ -696,9 +724,28 @@ void sanafe::schedule_messages_thread(Scheduler &scheduler, const int thread_id)
         {
             TRACE1(SCHEDULER, "tid:%d Scheduling ts:%ld sz:%zu\n", thread_id,
                     ts->timestep, scheduler.timesteps_to_schedule.size());
-            const TimingModelFunc timing_model =
-                    get_model_function(scheduler.timing_model);
-            timing_model(ts, scheduler, thread_id);
+            // An exception escaping a std::thread ends the process, so it is
+            //  kept for schedule_stop_all_threads to rethrow.
+            try
+            {
+                const TimingModelFunc timing_model =
+                        get_model_function(scheduler.timing_model);
+                timing_model(ts, scheduler, thread_id);
+            }
+            catch (const std::exception &error)
+            {
+                std::ostringstream context;
+                context << "timestep " << ts->timestep << ": " << error.what();
+                schedule_record_error(scheduler,
+                        std::make_exception_ptr(
+                                std::runtime_error(context.str())));
+                return;
+            }
+            catch (...)
+            {
+                schedule_record_error(scheduler, std::current_exception());
+                return;
+            }
         }
     }
 
@@ -706,16 +753,13 @@ void sanafe::schedule_messages_thread(Scheduler &scheduler, const int thread_id)
             thread_id);
 }
 
-void sanafe::schedule_stop_all_threads(Scheduler &scheduler)
+void sanafe::schedule_release_resources(Scheduler &scheduler) noexcept
 {
-    TRACE1(SCHEDULER, "Stopping all scheduling threads.\n");
-    scheduler.timesteps_to_schedule.wait_until_empty();
-    TRACE1(SCHEDULER, "All messages scheduled so terminate threads.\n");
+    // Also runs from ~Scheduler during unwinding, so it must not throw.
     scheduler.should_stop = true;
     scheduler.timesteps_to_schedule.set_terminate();
     scheduler.timesteps_to_write.set_terminate();
 
-    // This function is blocking i.e., waits for all workers to finish
     for (auto &thread : scheduler.scheduler_threads)
     {
         if (thread.joinable())
@@ -723,14 +767,37 @@ void sanafe::schedule_stop_all_threads(Scheduler &scheduler)
             thread.join();
         }
     }
+    scheduler.scheduler_threads.clear();
 
     for (BookSimInstance *instance : scheduler.booksim_instances)
     {
         booksim_destroy(instance);
     }
     scheduler.booksim_instances.clear();
+}
 
+void sanafe::schedule_stop_all_threads(Scheduler &scheduler)
+{
+    TRACE1(SCHEDULER, "Stopping all scheduling threads.\n");
+    // Returns early if a failed thread terminated the queue.
+    scheduler.timesteps_to_schedule.wait_until_empty();
+    TRACE1(SCHEDULER, "All messages scheduled so terminate threads.\n");
+
+    schedule_release_resources(scheduler);
     TRACE1(SCHEDULER, "All threads stopped successfully.\n");
+
+    // A thread's failure surfaces here, on the caller's thread.
+    if (scheduler.first_error)
+    {
+        const std::exception_ptr error = scheduler.first_error;
+        scheduler.first_error = nullptr;
+        std::rethrow_exception(error);
+    }
+}
+
+sanafe::Scheduler::~Scheduler()
+{
+    schedule_release_resources(*this);
 }
 
 // NOLINTEND(cppcoreguidelines-pro-bounds-avoid-unchecked-container-access)

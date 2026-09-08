@@ -11,6 +11,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <functional> // For std::reference_wrapper
 #include <list>
 #include <mutex>
@@ -153,8 +154,19 @@ struct Scheduler
     ThreadSafePriorityQueue<TimestepHandle, std::vector<TimestepHandle>,
             CompareTimesteps>
             timesteps_to_write;
-    // One Booksim instance per scheduler thread plus one for the serial path.
+    // One Booksim instance per scheduler thread, and one for the serial path.
     std::vector<BookSimInstance *> booksim_instances;
+    // First error a scheduler thread hit; schedule_stop_all_threads rethrows it.
+    std::mutex error_mutex;
+    std::exception_ptr first_error;
+
+    Scheduler() = default;
+    // Releases threads and Booksim instances even if a timestep throws.
+    ~Scheduler();
+    Scheduler(const Scheduler &copy) = delete;
+    Scheduler(Scheduler &&other) = delete;
+    Scheduler &operator=(const Scheduler &copy) = delete;
+    Scheduler &operator=(Scheduler &&other) = delete;
 
     TimingModel timing_model{timing_model_detailed};
     std::string noc_topology{"mesh"};
@@ -211,7 +223,12 @@ double schedule_messages_timestep_cycle(TimestepHandle &ts, Scheduler &scheduler
 
 void schedule_create_threads(Scheduler &scheduler, int scheduler_thread_count);
 void schedule_messages_thread(Scheduler &scheduler, int thread_id);
+// Waits for the queued work, stops the threads, and rethrows whatever a
+//  thread failed with.
 void schedule_stop_all_threads(Scheduler &scheduler);
+// Stops the threads and frees the Booksim instances without waiting for
+//  queued work and without throwing. Safe to call twice.
+void schedule_release_resources(Scheduler &scheduler) noexcept;
 
 std::vector<MessageFifo> schedule_init_message_queues(const Timestep &ts, NocInfo &noc);
 
