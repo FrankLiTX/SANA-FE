@@ -170,6 +170,8 @@ struct Scheduler
 
     TimingModel timing_model{timing_model_detailed};
     std::string noc_topology{"mesh"};
+    std::string noc_routing{"dimension_order"};
+    size_t noc_virtual_channels{0UL};
     size_t noc_width_in_tiles{0UL};
     size_t noc_height_in_tiles{0UL};
     size_t buffer_size{0UL};
@@ -257,10 +259,13 @@ constexpr std::array<std::string_view, 15> booksim_router_config = {{
         "clock_period = 1e-9"
 }};
 
-// Builds a Booksim configuration for the NoC. Throws if Booksim cannot model it.
+// Builds a Booksim configuration for the NoC. Throws if Booksim cannot model
+//  it, or if the routing function needs more virtual channels than were asked
+//  for. Zero virtual channels means the fewest that routing function needs.
 std::vector<std::string> booksim_config_from_noc(const std::string &topology,
-        size_t width_in_tiles, size_t height_in_tiles,
-        size_t cores_per_tile, size_t link_buffer_size);
+        const std::string &routing, size_t virtual_channels,
+        size_t width_in_tiles, size_t height_in_tiles, size_t cores_per_tile,
+        size_t link_buffer_size);
 
 }
 

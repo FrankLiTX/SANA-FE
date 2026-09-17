@@ -11,6 +11,7 @@
 //  the numbers of messages that are travelling through routes / flows at
 //  different times
 #include <algorithm>
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <exception>
@@ -21,6 +22,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -68,6 +70,65 @@ void schedule_record_error(
     scheduler.should_stop = true;
     scheduler.timesteps_to_schedule.set_terminate();
     scheduler.timesteps_to_write.set_terminate();
+}
+
+// A routing function as the architecture names it, the name Booksim knows it
+//  by, and the fewest virtual channels it needs. With fewer, functions that
+//  split the channels between phases deadlock and adaptive ones stop adapting.
+struct RoutingOption
+{
+    std::string_view name;
+    std::string_view booksim_name;
+    size_t min_virtual_channels;
+};
+
+constexpr std::array<RoutingOption, 7> mesh_routing{{
+        {"dimension_order", "dim_order", 1},
+        {"min_adapt", "min_adapt", 2},
+        {"planar_adapt", "planar_adapt", 3},
+        {"xy_yx", "xy_yx", 2},
+        {"adaptive_xy_yx", "adaptive_xy_yx", 2},
+        {"romm", "romm", 2},
+        {"valiant", "valiant", 2},
+}};
+
+// A concentrated mesh has express channels, and its routing functions come in
+//  express and plain pairs. The plain ones are the safe default.
+constexpr std::array<RoutingOption, 4> concentrated_mesh_routing{{
+        {"dimension_order", "dor_no_express", 1},
+        {"dimension_order_express", "dor", 1},
+        {"xy_yx", "xy_yx_no_express", 2},
+        {"xy_yx_express", "xy_yx", 2},
+}};
+
+constexpr std::array<RoutingOption, 4> torus_routing{{
+        {"dimension_order", "dim_order", 2},
+        {"balanced_dimension_order", "dim_order_bal", 2},
+        {"min_adapt", "min_adapt", 4},
+        {"valiant", "valiant", 4},
+}};
+
+template <size_t N>
+const RoutingOption &choose_routing(const std::array<RoutingOption, N> &options,
+        const std::string &routing, const std::string &topology)
+{
+    const auto match = std::find_if(options.begin(), options.end(),
+            [&routing](const RoutingOption &option) {
+                return option.name == routing;
+            });
+    if (match == options.end())
+    {
+        std::string supported;
+        for (const RoutingOption &option : options)
+        {
+            supported += supported.empty() ? "" : ", ";
+            supported += std::string(option.name);
+        }
+        throw std::runtime_error("Error: Routing '" + routing +
+                "' is not supported on a " + topology + "; supported: " +
+                supported + ".");
+    }
+    return *match;
 }
 }
 
@@ -181,16 +242,11 @@ double sanafe::schedule_messages_timestep_cycle(
 }
 
 std::vector<std::string> sanafe::booksim_config_from_noc(
-        const std::string &topology, const size_t width_in_tiles,
+        const std::string &topology, const std::string &routing,
+        const size_t virtual_channels, const size_t width_in_tiles,
         const size_t height_in_tiles, const size_t cores_per_tile,
         const size_t link_buffer_size)
 {
-    if (topology != "mesh")
-    {
-        throw std::runtime_error("Error: NoC topology '" + topology +
-                "' is not supported by the cycle-accurate timing model; "
-                "only 'mesh' is.");
-    }
     // Booksim's cmesh only supports four cores per router.
     const bool concentrated = (cores_per_tile > 1);
     if (concentrated && cores_per_tile != 4)
@@ -205,33 +261,73 @@ std::vector<std::string> sanafe::booksim_config_from_noc(
         config.push_back(key + " = " + std::to_string(value));
     };
 
-    // Booksim numbers mesh nodes by row but cmesh nodes by column, like tile
-    // ids. A square mesh is symmetric, so only rectangular grids need cmesh.
     const bool square = (width_in_tiles == height_in_tiles);
-    if (concentrated || !square)
+    const RoutingOption *chosen = nullptr;
+    if (topology == "mesh")
     {
-        config.emplace_back("topology = cmesh");
-        config.emplace_back("routing_function = dor_no_express");
-        set("x", width_in_tiles);
-        set("y", height_in_tiles);
-        set("c", 4);
-        // Booksim splits the concentration into a 2x2 grid of cores per router.
-        set("xr", 2);
-        set("yr", 2);
-        set("k", std::max(width_in_tiles, height_in_tiles));
-        set("n", 2);
+        // Booksim numbers mesh nodes by row but cmesh nodes by column, like
+        //  tile ids. A square mesh is symmetric, so only rectangular grids
+        //  need cmesh.
+        if (concentrated || !square)
+        {
+            chosen = &choose_routing(
+                    concentrated_mesh_routing, routing, "concentrated mesh");
+            config.emplace_back("topology = cmesh");
+            set("x", width_in_tiles);
+            set("y", height_in_tiles);
+            set("c", 4);
+            // Booksim splits the concentration into a 2x2 grid of cores.
+            set("xr", 2);
+            set("yr", 2);
+            set("k", std::max(width_in_tiles, height_in_tiles));
+            set("n", 2);
+        }
+        else
+        {
+            chosen = &choose_routing(mesh_routing, routing, "mesh");
+            config.emplace_back("topology = mesh");
+            set("c", 1);
+            set("k", width_in_tiles);
+            set("n", 2);
+        }
     }
-    else
+    else if (topology == "torus")
     {
-        config.emplace_back("topology = mesh");
-        config.emplace_back("routing_function = dim_order");
+        // Booksim builds a torus as k^n nodes with one node per router, so it
+        //  can only be a square grid of single-core tiles.
+        if (concentrated || !square)
+        {
+            throw std::runtime_error(
+                    "Error: A torus needs a square grid of tiles with one core "
+                    "each, but this architecture is " +
+                    std::to_string(width_in_tiles) + "x" +
+                    std::to_string(height_in_tiles) + " with " +
+                    std::to_string(cores_per_tile) + " cores per tile.");
+        }
+        chosen = &choose_routing(torus_routing, routing, "torus");
+        config.emplace_back("topology = torus");
         set("c", 1);
         set("k", width_in_tiles);
         set("n", 2);
     }
+    else
+    {
+        throw std::runtime_error("Error: NoC topology '" + topology +
+                "' is not supported by the cycle-accurate timing model; "
+                "supported: mesh, torus.");
+    }
+    config.emplace_back(
+            "routing_function = " + std::string(chosen->booksim_name));
 
-    // Dimension-order routing is deterministic, so one VC cannot deadlock.
-    set("num_vcs", 1);
+    const size_t vcs = (virtual_channels == 0) ? chosen->min_virtual_channels
+                                               : virtual_channels;
+    if (vcs < chosen->min_virtual_channels)
+    {
+        throw std::runtime_error("Error: Routing '" + routing + "' needs at "
+                "least " + std::to_string(chosen->min_virtual_channels) +
+                " virtual channels, not " + std::to_string(vcs) + ".");
+    }
+    set("num_vcs", vcs);
     set("vc_buf_size", std::max<size_t>(1, link_buffer_size));
 
     return config;
@@ -247,7 +343,8 @@ void sanafe::schedule_create_threads(
         const size_t instance_count =
                 static_cast<size_t>(std::max(1, scheduler_thread_count));
         const std::vector<std::string> booksim_config = booksim_config_from_noc(
-                scheduler.noc_topology, scheduler.noc_width_in_tiles,
+                scheduler.noc_topology, scheduler.noc_routing,
+                scheduler.noc_virtual_channels, scheduler.noc_width_in_tiles,
                 scheduler.noc_height_in_tiles, scheduler.max_cores_per_tile,
                 scheduler.buffer_size);
         for (size_t i = 0; i < instance_count; ++i)

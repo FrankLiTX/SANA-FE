@@ -434,6 +434,17 @@ sanafe::description_parse_noc_configuration_yaml(
     NetworkOnChipConfiguration noc;
     noc.topology = yaml_optional_field<std::string>(noc_attributes, "topology")
                            .value_or("mesh");
+    noc.routing = yaml_optional_field<std::string>(noc_attributes, "routing")
+                          .value_or("dimension_order");
+    const int virtual_channels =
+            yaml_optional_field<int>(noc_attributes, "virtual_channels")
+                    .value_or(0);
+    if (virtual_channels < 0)
+    {
+        throw YamlDescriptionParsingError(
+                "Virtual channels must be >= 0", parser, noc_attributes);
+    }
+    noc.virtual_channels = static_cast<size_t>(virtual_channels);
     noc.width_in_tiles =
             yaml_required_field<int>(parser, noc_attributes, "width");
     noc.height_in_tiles =

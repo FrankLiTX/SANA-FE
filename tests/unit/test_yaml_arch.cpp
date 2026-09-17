@@ -18,6 +18,68 @@ ryml::Tree parse_yaml_snippet(
             &parser, const_cast<char *>(yaml_text.c_str()));
     return tree;
 }
+
+// A one-core architecture with extra NoC attribute lines.
+std::string arch_with_noc(const std::string &noc_attributes)
+{
+    return R"(
+architecture:
+  name: noc_arch
+  attributes:
+    link_buffer_size: 1
+    width: 1
+    height: 1
+)" + noc_attributes + R"(  tile:
+    - name: tile0
+      attributes:
+        energy_north_hop: 1.0
+        latency_north_hop: 1.0
+        energy_east_hop: 1.0
+        latency_east_hop: 1.0
+        energy_south_hop: 1.0
+        latency_south_hop: 1.0
+        energy_west_hop: 1.0
+        latency_west_hop: 1.0
+      core:
+        - name: core0
+          attributes:
+            buffer_position: soma
+            max_neurons_supported: 10
+          axon_in:
+            - name: axin
+              attributes:
+                energy_message_in: 0.0
+                latency_message_in: 0.0
+          synapse:
+            - name: syn
+              attributes:
+                model: current_based
+                energy_process_spike: 1.0
+                latency_process_spike: 1.0
+          dendrite:
+            - name: dend
+              attributes:
+                model: accumulator
+                energy_update: 0.0
+                latency_update: 0.0
+                update_every_timestep: true
+          soma:
+            - name: soma
+              attributes:
+                model: leaky_integrate_fire
+                energy_access_neuron: 1.0
+                latency_access_neuron: 1.0
+                energy_update_neuron: 1.0
+                latency_update_neuron: 1.0
+                energy_spike_out: 1.0
+                latency_spike_out: 1.0
+          axon_out:
+            - name: axout
+              attributes:
+                energy_message_out: 1.0
+                latency_message_out: 1.0
+)";
+}
 }
 
 TEST(YamlArchTest, ParseAxonInAttributes_Valid)
@@ -593,4 +655,61 @@ TEST(YamlArchTest, LoadArchFromFile_VerifiesNestedStructure)
     EXPECT_DOUBLE_EQ(arch.tiles[0].power_metrics.energy_north_hop, 2.0e-12);
     EXPECT_DOUBLE_EQ(arch.tiles[0].cores[0].pipeline_hw[0].model_info.model_attributes.at("energy_process_spike"), 20.0e-12); // Hardware pipeline units via pipeline_hw vector
     EXPECT_DOUBLE_EQ(arch.tiles[0].cores[0].axon_out[0].metrics.latency_message_out, 5.0e-9);
+}
+
+TEST(YamlArchTest, ParsesNocRoutingAndVirtualChannels)
+{
+    const std::string yaml = arch_with_noc("    topology: torus\n"
+                                           "    routing: min_adapt\n"
+                                           "    virtual_channels: 4\n");
+
+    // NOLINTBEGIN(misc-include-cleaner)
+    ryml::EventHandlerTree event_handler = {};
+    ryml::Parser parser(&event_handler, ryml::ParserOptions().locations(true));
+    auto tree = parse_yaml_snippet(yaml, parser);
+    const ryml::ConstNodeRef root = tree.rootref();
+
+    sanafe::Architecture arch = sanafe::description_parse_arch_section_yaml(
+            parser, root["architecture"]);
+
+    EXPECT_EQ(arch.noc_topology, "torus");
+    EXPECT_EQ(arch.noc_routing, "min_adapt");
+    EXPECT_EQ(arch.noc_virtual_channels, 4);
+    // NOLINTEND(misc-include-cleaner)
+}
+
+TEST(YamlArchTest, NocDefaultsToMeshDimensionOrder)
+{
+    const std::string yaml = arch_with_noc("");
+
+    // NOLINTBEGIN(misc-include-cleaner)
+    ryml::EventHandlerTree event_handler = {};
+    ryml::Parser parser(&event_handler, ryml::ParserOptions().locations(true));
+    auto tree = parse_yaml_snippet(yaml, parser);
+    const ryml::ConstNodeRef root = tree.rootref();
+
+    sanafe::Architecture arch = sanafe::description_parse_arch_section_yaml(
+            parser, root["architecture"]);
+
+    EXPECT_EQ(arch.noc_topology, "mesh");
+    EXPECT_EQ(arch.noc_routing, "dimension_order");
+    // Zero means the fewest channels the routing function needs.
+    EXPECT_EQ(arch.noc_virtual_channels, 0);
+    // NOLINTEND(misc-include-cleaner)
+}
+
+TEST(YamlArchTest, NegativeVirtualChannelsThrows)
+{
+    const std::string yaml = arch_with_noc("    virtual_channels: -1\n");
+
+    // NOLINTBEGIN(misc-include-cleaner)
+    ryml::EventHandlerTree event_handler = {};
+    ryml::Parser parser(&event_handler, ryml::ParserOptions().locations(true));
+    auto tree = parse_yaml_snippet(yaml, parser);
+    const ryml::ConstNodeRef root = tree.rootref();
+
+    EXPECT_THROW(sanafe::description_parse_arch_section_yaml(
+                         parser, root["architecture"]),
+            sanafe::YamlDescriptionParsingError);
+    // NOLINTEND(misc-include-cleaner)
 }

@@ -708,6 +708,8 @@ pybind11::dict pysim(sanafe::SpikingChip *self, const long int timesteps,
 
     sanafe::Scheduler scheduler;
     scheduler.noc_topology = self->noc_topology;
+    scheduler.noc_routing = self->noc_routing;
+    scheduler.noc_virtual_channels = self->noc_virtual_channels;
     scheduler.noc_width_in_tiles = self->noc_width_in_tiles;
     scheduler.noc_height_in_tiles = self->noc_height_in_tiles;
     scheduler.buffer_size = self->noc_buffer_size;

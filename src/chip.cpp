@@ -61,6 +61,8 @@ sanafe::SpikingChip::SpikingChip(const Architecture &arch)
         : ts_sync_delay_table(arch.ts_sync_delay_table)
         , core_count(arch.core_count)
         , noc_topology(arch.noc_topology)
+        , noc_routing(arch.noc_routing)
+        , noc_virtual_channels(arch.noc_virtual_channels)
         , max_cores_per_tile(arch.max_cores_per_tile)
         , noc_width_in_tiles(arch.noc_width_in_tiles)
         , noc_height_in_tiles(arch.noc_height_in_tiles)
@@ -475,6 +477,8 @@ sanafe::RunData sanafe::SpikingChip::sim(const long int timesteps,
 
     Scheduler scheduler;
     scheduler.noc_topology = noc_topology;
+    scheduler.noc_routing = noc_routing;
+    scheduler.noc_virtual_channels = noc_virtual_channels;
     scheduler.noc_width_in_tiles = noc_width_in_tiles;
     scheduler.noc_height_in_tiles = noc_height_in_tiles;
     scheduler.buffer_size = noc_buffer_size;

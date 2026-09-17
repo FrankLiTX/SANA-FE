@@ -30,6 +30,8 @@ sanafe::Architecture::Architecture(
         : ts_sync_delay_table(noc.ts_sync_delay_table)
         , name(std::move(name))
         , noc_topology(noc.topology)
+        , noc_routing(noc.routing)
+        , noc_virtual_channels(noc.virtual_channels)
         , noc_width_in_tiles(noc.width_in_tiles)
         , noc_height_in_tiles(noc.height_in_tiles)
         , noc_buffer_size(noc.link_buffer_size)

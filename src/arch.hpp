@@ -74,6 +74,8 @@ public:
     LookupTable<double> ts_sync_delay_table{};
     std::string name;
     std::string noc_topology{"mesh"};
+    std::string noc_routing{"dimension_order"};
+    size_t noc_virtual_channels{0UL};
     size_t core_count{0UL};
     size_t max_cores_per_tile{0UL};
     size_t noc_width_in_tiles{1UL};
@@ -98,6 +100,9 @@ struct NetworkOnChipConfiguration
 {
     LookupTable<double> ts_sync_delay_table{};
     std::string topology{"mesh"};
+    std::string routing{"dimension_order"};
+    // 0 means the fewest virtual channels the routing function can work with.
+    size_t virtual_channels{0UL};
     size_t width_in_tiles{1UL};
     size_t height_in_tiles{1UL};
     size_t link_buffer_size{0UL};

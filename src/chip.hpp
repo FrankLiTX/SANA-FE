@@ -102,6 +102,8 @@ public:
     size_t mapped_cores{0UL};
     size_t mapped_tiles{0UL};
     std::string noc_topology{"mesh"};
+    std::string noc_routing{"dimension_order"};
+    size_t noc_virtual_channels{0UL};
     size_t max_cores_per_tile{0UL};
     size_t noc_width_in_tiles{1UL};
     size_t noc_height_in_tiles{1UL};
